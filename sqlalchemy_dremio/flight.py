@@ -1,5 +1,3 @@
-import re
-
 from sqlalchemy import schema, types, pool
 from sqlalchemy.engine import default, reflection
 from sqlalchemy.sql import compiler
@@ -175,7 +173,7 @@ class DremioDialect_flight(default.DefaultDialect):
         def add_property(lc_query_dict, property_name, connectors):
             if property_name.lower() in lc_query_dict:
                 connectors.append('{0}={1}'.format(property_name, lc_query_dict[property_name.lower()]))
-        
+
         add_property(lc_query_dict, 'UseEncryption', connectors)
         add_property(lc_query_dict, 'DisableCertificateVerification', connectors)
         add_property(lc_query_dict, 'TrustedCerts', connectors)
@@ -240,3 +238,32 @@ class DremioDialect_flight(default.DefaultDialect):
         result = connection.execute("SHOW SCHEMAS")
         schema_names = [r[0] for r in result]
         return schema_names
+
+    @reflection.cache
+    def has_table(self, connection, table_name, schema=None, **kw):
+        sql = 'SELECT COUNT(*) FROM INFORMATION_SCHEMA."TABLES"'
+        sql += " WHERE TABLE_NAME = '" + str(table_name) + "'"
+        if schema is not None and schema != "":
+            sql += " AND TABLE_SCHEMA = '" + str(schema) + "'"
+        result = connection.execute(sql)
+        countRows = [r[0] for r in result]
+        return countRows[0] > 0
+
+    def get_view_names(self, connection, schema=None, **kwargs):
+        return []
+
+    # Workaround since Dremio does not support parameterized stmts
+    # Old queries should not have used queries with parameters, since Dremio does not support it
+    # and these queries failed. If there is no parameter, everything should work as before.
+    def do_execute(self, cursor, statement, parameters, context=None):
+        replaced_stmt = statement
+        for v in parameters:
+            escaped_str = str(v).replace("'", "''")
+            if isinstance(v, (int, float)):
+                replaced_stmt = replaced_stmt.replace('?', escaped_str, 1)
+            else:
+                replaced_stmt = replaced_stmt.replace('?', "'" + escaped_str + "'", 1)
+
+        super(DremioDialect_flight, self).do_execute_no_params(
+            cursor, replaced_stmt, context
+        )
